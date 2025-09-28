@@ -29,7 +29,7 @@ router.post('/refine-course', async (req, res) => {
 Tu dois transformer une transcription orale en un poly clair et structuré.
 Contraintes :
 - Respecter strictement la chronologie du professeur. (dans la limite du raisonable, ne jamais sacrifier la clareté à chronologie, et c'est pas grave si tu te répète pour compenser ca)
-- Conserver toutes les informations scientifiques et pédagogiques données.
+- Conserver toutes les informations scientifiques et pédagogiques données, pas bêtement se qui a un rapport avec le cours, pas d'info superflux.
 - Supprimer les phrases parasites et inutiles (ex: blagues, apartés, café, Gmail).
 - Écrire uniquement de vraies phrases fluides, pas de puces ou de flèches.
 - Ne rien inventer, mais tu peux ajouter une précision brève si nécessaire à la compréhension.
