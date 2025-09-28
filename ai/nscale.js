@@ -3,8 +3,9 @@ require('dotenv').config();
 
 const NSCALE_URL = 'https://inference.api.nscale.com/v1/chat/completions';
 const NSCALE_TOKEN = process.env.NSCALE_SERVICE_TOKEN;
-// Par défaut tu peux choisir le modèle via .env, sinon exemple Llama 3.1 8B Instruct
-const DEFAULT_MODEL = process.env.NSCALE_MODEL || 'meta-llama/Llama-3.1-8B-Instruct';
+
+// 👉 modèle par défaut forcé
+const DEFAULT_MODEL = 'openai/gpt-oss-20b';
 
 if (!NSCALE_TOKEN) {
   throw new Error('❌ NSCALE_SERVICE_TOKEN manquant dans .env');
@@ -13,7 +14,7 @@ if (!NSCALE_TOKEN) {
 // messages = [{role:'system'|'user'|'assistant', content:'...'}, ...]
 async function chat(messages, opts = {}) {
   const body = {
-    model: opts.model || DEFAULT_MODEL,
+    model: DEFAULT_MODEL, // toujours 20B
     messages,
     temperature: opts.temperature ?? 0.2,
     max_tokens: opts.max_tokens ?? 2000,
@@ -34,9 +35,9 @@ async function chat(messages, opts = {}) {
   }
 
   const data = await r.json();
-  // OpenAI-compatible: data.choices[0].message.content
   const content = data?.choices?.[0]?.message?.content ?? '';
   return { content, raw: data };
 }
 
 module.exports = { chat };
+
