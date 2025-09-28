@@ -4,17 +4,13 @@ const router = express.Router();
 const { supabase } = require('../db');
 const { chat } = require('../ai/nscale');
 
-const MAX_CHUNK = 8000; // ~8k caractères par chunk pour rester safe
+const MAX_CHUNK = 8000; // ~8k caractères d'entrée
 
-// POST /api/refine-course  { courseId: string }
 router.post('/refine-course', async (req, res) => {
   try {
     const { courseId } = req.body || {};
-    if (!courseId) {
-      return res.status(400).json({ error: 'courseId requis.' });
-    }
+    if (!courseId) return res.status(400).json({ error: 'courseId requis.' });
 
-    // 1) Lire la transcription brute
     const { data: course, error: cErr } = await supabase
       .from('courses')
       .select('id, title, ue_number, raw_content')
@@ -22,46 +18,39 @@ router.post('/refine-course', async (req, res) => {
       .single();
 
     if (cErr || !course) return res.status(404).json({ error: 'Cours introuvable.' });
-    const raw = String(course.raw_content || '').trim();
-    if (!raw) return res.status(400).json({ error: 'raw_content vide pour ce cours.' });
 
-    // 2) Split en chunks lisibles (en conservant l’ordre)
+    const raw = String(course.raw_content || '').trim();
+    if (!raw) return res.status(400).json({ error: 'raw_content vide.' });
+
     const chunks = splitForRefine(raw, MAX_CHUNK);
 
-    // 3) Prompt de consigne — strict sur l’ordre / pas d’info supprimée
-    const system = `Tu es un scribe pédagogique.
-Tu réécris un cours à partir d'une transcription Whisper pour le rendre clair et structuré,
-EN RESPECTANT *STRICTEMENT* L'ORDRE du texte source, SANS supprimer d'informations.
-- Conserver les termes techniques EXACTS du professeur.
-- Ne JAMAIS inventer de nouveaux faits.
-- Tu peux reformuler pour la clarté (phrases complètes), ajouter de brèves précisions explicatives si nécessaire,
-  mais JAMAIS retirer une information présente.
-- Le résultat doit ressembler à un poly "mis au propre" fidèle au cours.`;
+    // Nouveau prompt
+    const system = `Tu es un scribe PASS.
+Tu dois transformer une transcription orale en un poly clair et structuré.
+Contraintes :
+- Respecter strictement la chronologie du professeur. (dans la limite du raisonable, ne jamais sacrifier la clareté à chronologie, et c'est pas grave si tu te répète pour compenser ca)
+- Conserver toutes les informations scientifiques et pédagogiques données.
+- Supprimer les phrases parasites et inutiles (ex: blagues, apartés, café, Gmail).
+- Écrire uniquement de vraies phrases fluides, pas de puces ou de flèches.
+- Ne rien inventer, mais tu peux ajouter une précision brève si nécessaire à la compréhension.
+- Maintenir la longueur et la densité d'informations (ne pas raccourcir trop).`;
 
-    // 4) Traiter les chunks séquentiellement
     let parts = [];
     for (let i = 0; i < chunks.length; i++) {
-      const user = `Cours (partie ${i + 1}/${chunks.length}) :
+      const user = `Voici la partie ${i + 1}/${chunks.length} :
 """
 ${chunks[i]}
 """
 
-Consigne:
-- Réécris cette partie SEULEMENT, en respectant l'ordre interne des idées.
-- Conserve toutes les informations.
-- Améliore la lisibilité (titres, puces si utiles, phrases complètes).
-- N'utilise aucune introduction/conclusion globale, pas de résumé hors texte.
-- Ne pas renuméroter d'une manière qui casse l'ordre d'origine.
-- N'ajoute pas de contenu externe; autorisées: brèves clarifications (entre parenthèses) si ça aide à comprendre.
-
-Réponds par le TEXTE seul (markdown simple autorisé), sans autre balise.`;
+Réécris cette partie comme un cours écrit, en respectant les contraintes ci-dessus.
+Réponds uniquement avec le texte rédigé, sans balises ni commentaires.`;
 
       const { content: refinedPart } = await chat(
         [
           { role: 'system', content: system },
           { role: 'user', content: user }
         ],
-        { temperature: 0.1, max_tokens: 2500 }
+        { temperature: 0.1, max_tokens: 6000 } // ← augmenté
       );
 
       parts.push(refinedPart.trim());
@@ -69,7 +58,6 @@ Réponds par le TEXTE seul (markdown simple autorisé), sans autre balise.`;
 
     const refined = parts.join('\n\n');
 
-    // 5) Enregistrer dans refined_content
     const { error: uErr } = await supabase
       .from('courses')
       .update({ refined_content: refined })
@@ -87,10 +75,9 @@ Réponds par le TEXTE seul (markdown simple autorisé), sans autre balise.`;
   }
 });
 
-// Découpage "propre" sur doubles sauts de ligne / titres / phrases
 function splitForRefine(text, max) {
   if (text.length <= max) return [text];
-  const paragraphs = text.split(/\n{2,}/); // blocs séparés par lignes vides
+  const paragraphs = text.split(/\n{2,}/);
   const chunks = [];
   let buf = '';
   for (const p of paragraphs) {
@@ -98,7 +85,6 @@ function splitForRefine(text, max) {
     if (candidate.length > max) {
       if (buf) chunks.push(buf);
       if (p.length > max) {
-        // si un paragraphe est énorme, on coupe par phrases
         const parts = p.split(/(?<=[\.!\?])\s+/);
         let sb = '';
         for (const s of parts) {
@@ -125,3 +111,4 @@ function splitForRefine(text, max) {
 }
 
 module.exports = router;
+
