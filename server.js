@@ -22,6 +22,7 @@ app.use('/api', require('./routes/generate'));
 app.use('/api', require('./routes/questions'));
 app.use('/api', require('./routes/answer'));
 app.use('/api', require('./routes/score'));
+app.use('/api', require('./routes/open'));
 
 // Middleware d'erreur global
 app.use((err, req, res, _next) => {
