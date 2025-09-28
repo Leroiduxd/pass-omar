@@ -126,4 +126,3 @@ function extractJson(s) {
 }
 
 module.exports = router;
-
