@@ -23,6 +23,7 @@ app.use('/api', require('./routes/questions'));
 app.use('/api', require('./routes/answer'));
 app.use('/api', require('./routes/score'));
 app.use('/api', require('./routes/open'));
+app.use('/api', require('./routes/refine'));
 
 // Middleware d'erreur global
 app.use((err, req, res, _next) => {
