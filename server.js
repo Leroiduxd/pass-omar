@@ -4,14 +4,23 @@ const express = require('express');
 
 const app = express();
 
-// Autoriser les payloads JSON volumineux (ex: longs cours)
-app.use(express.json({ limit: '10mb' }));
+// Accepter de gros JSON (jusqu'à 50 Mo)
+app.use(express.json({ limit: '50mb' }));
 
-// Endpoints (écriture et lecture)
+// Routes
 app.use('/api', require('./routes/write')); // POST /api/courses
 app.use('/api', require('./routes/read'));  // GET  /api/ues, /api/ues/:ueNumber/courses, /api/courses/:id
 
-// Démarrage
+// Middleware d'erreur global -> renvoie TOUJOURS du JSON
+app.use((err, req, res, _next) => {
+  // Erreur de payload trop gros (Express)
+  if (err && err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Payload trop volumineux (max 50MB).' });
+  }
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Erreur serveur.' });
+});
+
 const PORT = process.env.PORT || 9999;
 app.listen(PORT, () => {
   console.log(`API listening on :${PORT}`);
