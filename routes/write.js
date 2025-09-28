@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { supabase } = require('../db');
 
-// POST /api/courses  — créer un cours
+// POST /api/courses  — créer un cours (on stocke dans raw_content)
 router.post('/courses', async (req, res) => {
   try {
     const { ue_number, title, content } = req.body;
@@ -18,7 +18,7 @@ router.post('/courses', async (req, res) => {
 
     const { data, error } = await supabase
       .from('courses')
-      .insert([{ ue_number, title, content }])
+      .insert([{ ue_number, title, raw_content: content }])
       .select('id, ue_number, title, created_at')
       .single();
 
@@ -26,9 +26,10 @@ router.post('/courses', async (req, res) => {
 
     res.status(201).json({ course: data });
   } catch (e) {
-    console.error('POST /courses error:', e);
+    console.error(e);
     res.status(500).json({ error: 'Erreur serveur.' });
   }
 });
 
 module.exports = router;
+
