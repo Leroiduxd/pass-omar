@@ -50,7 +50,7 @@ Réponds uniquement avec le texte rédigé, sans balises ni commentaires.`;
           { role: 'system', content: system },
           { role: 'user', content: user }
         ],
-        { temperature: 0.1, max_tokens: 6000 } // ← augmenté
+        { temperature: 0.1, max_tokens: 24000 } // ← augmenté
       );
 
       parts.push(refinedPart.trim());
