@@ -1,12 +1,18 @@
 // server.js
+require('dotenv').config();
 const express = require('express');
+
 const app = express();
 
-app.use(express.json());
+// Autoriser les payloads JSON volumineux (ex: longs cours)
+app.use(express.json({ limit: '10mb' }));
 
-// routes séparées : write (POST) et read (GET)
-app.use('/api', require('./routes/write'));
-app.use('/api', require('./routes/read'));
+// Endpoints (écriture et lecture)
+app.use('/api', require('./routes/write')); // POST /api/courses
+app.use('/api', require('./routes/read'));  // GET  /api/ues, /api/ues/:ueNumber/courses, /api/courses/:id
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log(`API listening on :${PORT}`));
+// Démarrage
+const PORT = process.env.PORT || 9999;
+app.listen(PORT, () => {
+  console.log(`API listening on :${PORT}`);
+});
