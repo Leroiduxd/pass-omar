@@ -5,6 +5,9 @@ const { supabase } = require('../db');
 const { chat } = require('../ai/nscale');
 const { randomUUID } = require('crypto');
 
+/**
+ * Générer un set de questions ouvertes
+ */
 router.post('/generate-open', async (req, res) => {
   try {
     const { courseId, n, difficulty } = req.body || {};
@@ -15,7 +18,7 @@ router.post('/generate-open', async (req, res) => {
       return res.status(400).json({ error: 'Paramètres invalides: courseId requis, n entre 1 et 50.' });
     }
 
-    // 1) Cours (refined prioritaire) — NE PLUS SÉLECTIONNER "content"
+    // 1) Charger le cours
     const { data: course, error: cErr } = await supabase
       .from('courses')
       .select('id, ue_number, title, refined_content, raw_content')
@@ -29,58 +32,42 @@ router.post('/generate-open', async (req, res) => {
     if (!course) return res.status(404).json({ error: 'Cours introuvable.' });
 
     const baseText = course.refined_content || course.raw_content || '';
-    if (!baseText) return res.status(400).json({ error: 'Aucun contenu (raw/refined) pour ce cours.' });
+    if (!baseText) return res.status(400).json({ error: 'Aucun contenu disponible pour ce cours.' });
 
     const MAX_CHARS = 20000;
     const content = baseText.slice(0, MAX_CHARS);
 
-    // 2) Questions ouvertes existantes (anti-redondance)
-    const { data: existingOpen, error: eoErr } = await supabase
+    // 2) Anti-redondance : questions déjà existantes
+    const { data: existingOpen } = await supabase
       .from('open_questions')
       .select('prompt')
       .eq('course_id', course.id)
       .order('question_index', { ascending: true });
 
-    if (eoErr) {
-      console.error('Supabase open dedup read error:', eoErr);
-    }
-
-    const existingOpenPrompts = (existingOpen || [])
-      .map(q => q.prompt)
-      .filter(Boolean)
-      .slice(-100);
+    const existingOpenPrompts = (existingOpen || []).map(q => q.prompt).filter(Boolean).slice(-100);
 
     const system = `Tu es un enseignant PASS. Tu crées des questions ouvertes ciblées et non redondantes.
-Réponds STRICTEMENT en JSON (voir format).`;
+Réponds STRICTEMENT au format JSON.`;
 
     const difficultyLine = diff
       ? `Chaque question doit avoir une difficulté = ${diff} (1 très simple, 5 difficile mais faisable).`
-      : `Varie la difficulté sur l'ensemble (1 à 5) sans questions ridicules ni trop pointilleuses.`;
+      : `Varie la difficulté de 1 à 5.`;
 
     const dedupBlock = existingOpenPrompts.length
-      ? `Évite tout recouvrement avec ces questions déjà posées pour ce cours :
-${existingOpenPrompts.map((s, i) => `- Q${i+1}: ${s}`).join('\n')}`
-      : `Il n'y a pas de questions ouvertes existantes pour ce cours.`;
+      ? `Évite les thèmes déjà posés :\n${existingOpenPrompts.map((s, i) => `- ${s}`).join('\n')}`
+      : `Aucune question existante.`;
 
-    const user = `Cours (titre: "${course.title}", UE ${course.ue_number}):
+    const user = `Cours: "${course.title}" (UE ${course.ue_number})
 """
 ${content}
 """
 
 Tâche:
-- Génère ${count} questions OUVERTES non redondantes couvrant des points clés variés du cours.
-- Fournis une "réponse de référence" concise (3–6 phrases max).
+- Génère ${count} questions ouvertes non redondantes.
+- Donne une "réponse de référence" claire (3–6 phrases max).
 - ${difficultyLine}
 
-Contraintes:
-- Français, précis, strictement à partir du cours (aucun hors-sujet).
-- Les questions doivent être fermes et vérifiables depuis le texte fourni.
-- Pas de duplication des sujets déjà traités ci-dessous.
-
-Anti-redondance:
-${dedupBlock}
-
-Format JSON STRICT (tableau):
+Format JSON STRICT (tableau) :
 [
   {"prompt":"…","reference_answer":"…","difficulty":3},
   ...
@@ -103,7 +90,7 @@ Format JSON STRICT (tableau):
       return res.status(422).json({ error: 'JSON invalide renvoyé par le modèle.', raw: llmOut.slice(0, 2000) });
     }
 
-    // 3) Insert en DB (avec difficulty)
+    // 3) Insertion en DB
     const set_code = randomUUID();
     const rows = items.map((it, i) => ({
       set_code,
@@ -132,17 +119,118 @@ Format JSON STRICT (tableau):
   }
 });
 
-/* Si tu as déjà un /grade-open dans ce fichier, laisse-le inchangé. */
+/**
+ * Corriger une réponse d’utilisateur
+ */
+router.post('/grade-open', async (req, res) => {
+  try {
+    const { open_question_id, answer, user_id } = req.body || {};
+    if (!open_question_id || !answer) {
+      return res.status(400).json({ error: 'open_question_id et answer requis.' });
+    }
 
+    // 1) Charger la question
+    const { data: oq, error: qErr } = await supabase
+      .from('open_questions')
+      .select('id, set_code, question_index, course_id, prompt, reference_answer')
+      .eq('id', open_question_id)
+      .single();
+
+    if (qErr || !oq) return res.status(404).json({ error: 'Question ouverte introuvable.' });
+
+    // 2) Charger le cours pour contexte
+    const { data: course } = await supabase
+      .from('courses')
+      .select('content, raw_content, refined_content, title, ue_number')
+      .eq('id', oq.course_id)
+      .single();
+
+    const courseSnippet = (course?.refined_content || course?.raw_content || '').slice(0, 12000);
+
+    // 3) Prompt de correction
+    const system = `Tu es correcteur PASS. Note une réponse selon:
+- Exactitude (0–0.4)
+- Complétude (0–0.4)
+- Clarté (0–0.2)
+Rends uniquement un JSON STRICT.`;
+
+    const user = `Cours (extrait):
+"""
+${courseSnippet}
+"""
+
+Question: ${oq.prompt}
+
+Réponse attendue: ${oq.reference_answer}
+
+Réponse de l'élève: ${answer}
+
+Donne un JSON strict :
+{
+  "exactitude": 0.0,
+  "completude": 0.0,
+  "clarte": 0.0,
+  "score_final": 0.0,
+  "feedback": "..."
+}`;
+
+    const { content: llmOut } = await chat(
+      [
+        { role: 'system', content: system },
+        { role: 'user', content: user }
+      ],
+      { temperature: 0.0, max_tokens: 600 }
+    );
+
+    const json = extractJson(llmOut);
+    let grading;
+    try {
+      grading = JSON.parse(json);
+    } catch {
+      return res.status(422).json({ error: 'Réponse IA invalide.', raw: llmOut.slice(0, 1200) });
+    }
+
+    const score = clamp01(Number(grading.score_final ?? 0));
+    const breakdown = {
+      exactitude: clamp01(Number(grading.exactitude ?? 0)),
+      completude: clamp01(Number(grading.completude ?? 0)),
+      clarte: clamp01(Number(grading.clarte ?? 0))
+    };
+    const feedback = String(grading.feedback || '').trim();
+
+    // 4) Enregistrer la tentative
+    await supabase.from('open_answers').insert([{
+      open_question_id: oq.id,
+      set_code: oq.set_code,
+      question_index: oq.question_index,
+      user_id: user_id || null,
+      answer,
+      score,
+      feedback,
+      breakdown
+    }]);
+
+    res.json({ score, feedback, breakdown });
+  } catch (err) {
+    console.error('POST /grade-open error:', err);
+    res.status(500).json({ error: 'Erreur serveur.' });
+  }
+});
+
+// Utils
 function extractJson(s) {
-  if (!s) return '[]';
+  if (!s) return '{}';
   const m = s.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
   if (m && m[1]) return m[1];
+  const startObj = s.indexOf('{'); const endObj = s.lastIndexOf('}');
   const startArr = s.indexOf('['); const endArr = s.lastIndexOf(']');
-  if (startArr !== -1 && endArr !== -1 && endArr > startArr) return s.slice(startArr, endArr + 1);
+  if (startArr !== -1 && endArr > startArr) return s.slice(startArr, endArr + 1);
+  if (startObj !== -1 && endObj > startObj) return s.slice(startObj, endObj + 1);
   return s;
+}
+function clamp01(x) {
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(1, x));
 }
 
 module.exports = router;
-
-
