@@ -15,27 +15,40 @@ router.post('/generate-open', async (req, res) => {
       return res.status(400).json({ error: 'Paramètres invalides: courseId requis, n entre 1 et 50.' });
     }
 
-    // 1) Cours (refined prioritaire)
+    // 1) Cours (refined prioritaire) — NE PLUS SÉLECTIONNER "content"
     const { data: course, error: cErr } = await supabase
       .from('courses')
-      .select('id, ue_number, title, refined_content, raw_content, content')
+      .select('id, ue_number, title, refined_content, raw_content')
       .eq('id', courseId)
       .single();
-    if (cErr || !course) return res.status(404).json({ error: 'Cours introuvable.' });
 
-    const baseText = course.refined_content || course.raw_content || course.content || '';
-    if (!baseText) return res.status(400).json({ error: 'Aucun contenu (raw/refined/content) pour ce cours.' });
+    if (cErr) {
+      console.error('Supabase course read error (open):', cErr);
+      return res.status(500).json({ error: 'Erreur lecture cours.' });
+    }
+    if (!course) return res.status(404).json({ error: 'Cours introuvable.' });
+
+    const baseText = course.refined_content || course.raw_content || '';
+    if (!baseText) return res.status(400).json({ error: 'Aucun contenu (raw/refined) pour ce cours.' });
 
     const MAX_CHARS = 20000;
     const content = baseText.slice(0, MAX_CHARS);
 
     // 2) Questions ouvertes existantes (anti-redondance)
-    const { data: existingOpen } = await supabase
+    const { data: existingOpen, error: eoErr } = await supabase
       .from('open_questions')
       .select('prompt')
       .eq('course_id', course.id)
       .order('question_index', { ascending: true });
-    const existingOpenPrompts = (existingOpen || []).map(q => q.prompt).filter(Boolean).slice(-100);
+
+    if (eoErr) {
+      console.error('Supabase open dedup read error:', eoErr);
+    }
+
+    const existingOpenPrompts = (existingOpen || [])
+      .map(q => q.prompt)
+      .filter(Boolean)
+      .slice(-100);
 
     const system = `Tu es un enseignant PASS. Tu crées des questions ouvertes ciblées et non redondantes.
 Réponds STRICTEMENT en JSON (voir format).`;
@@ -106,6 +119,7 @@ Format JSON STRICT (tableau):
       .insert(rows)
       .select('id, set_code, course_id, question_index, prompt, reference_answer, difficulty')
       .order('question_index', { ascending: true });
+
     if (insErr) {
       console.error('Insert open_questions error:', insErr);
       return res.status(500).json({ error: 'Erreur insertion open_questions.' });
@@ -118,7 +132,7 @@ Format JSON STRICT (tableau):
   }
 });
 
-/* grade-open inchangé... (conserve ton code actuel) */
+/* Si tu as déjà un /grade-open dans ce fichier, laisse-le inchangé. */
 
 function extractJson(s) {
   if (!s) return '[]';
@@ -130,4 +144,5 @@ function extractJson(s) {
 }
 
 module.exports = router;
+
 
