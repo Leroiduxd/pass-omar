@@ -15,21 +15,27 @@ router.post('/generate-mcq', async (req, res) => {
       return res.status(400).json({ error: 'Paramètres invalides: courseId requis, n entre 1 et 50.' });
     }
 
-    // 1) Lire le cours
-    const { data: course, error } = await supabase
+    // 1) Lire le cours (NE PAS sélectionner "content" si la colonne est supprimée)
+    const { data: course, error: cErr } = await supabase
       .from('courses')
-      .select('id, ue_number, title, refined_content, raw_content, content')
+      .select('id, ue_number, title, refined_content, raw_content')
       .eq('id', courseId)
       .single();
-    if (error || !course) return res.status(404).json({ error: 'Cours introuvable.' });
 
-    const baseText = course.refined_content || course.raw_content || course.content || '';
-    if (!baseText) return res.status(400).json({ error: 'Aucun contenu (raw/refined/content) pour ce cours.' });
+    if (cErr) {
+      console.error('Supabase course read error:', cErr);
+      return res.status(500).json({ error: 'Erreur lecture cours.' });
+    }
+    if (!course) return res.status(404).json({ error: 'Cours introuvable.' });
+
+    // Choisir la source de vérité pour le texte
+    const baseText = course.refined_content || course.raw_content || '';
+    if (!baseText) return res.status(400).json({ error: 'Aucun contenu (raw/refined) pour ce cours.' });
 
     const MAX_CHARS = 20000;
     const content = baseText.slice(0, MAX_CHARS);
 
-    // 2) Anti-redondance : questions ouvertes du même cours
+    // 2) Anti-redondance
     const { data: existingOpen } = await supabase
       .from('open_questions')
       .select('prompt')
@@ -37,7 +43,6 @@ router.post('/generate-mcq', async (req, res) => {
       .order('question_index', { ascending: true });
     const existingOpenPrompts = (existingOpen || []).map(q => q.prompt).filter(Boolean).slice(-100);
 
-    // 3) Anti-redondance : QCM déjà générés pour ce cours (grâce à course_id)
     const { data: existMcqSameCourse } = await supabase
       .from('questions')
       .select('question')
@@ -88,7 +93,7 @@ Format JSON STRICT (tableau):
   ...
 ]`;
 
-    // 4) Appel modèle
+    // 3) Appel modèle
     const { content: llmOut } = await chat(
       [
         { role: 'system', content: system },
@@ -97,7 +102,7 @@ Format JSON STRICT (tableau):
       { temperature: 0.2, max_tokens: 3500 }
     );
 
-    // 5) Parse JSON
+    // 4) Parse JSON
     const jsonText = extractJson(llmOut);
     let items;
     try {
@@ -107,7 +112,7 @@ Format JSON STRICT (tableau):
       return res.status(422).json({ error: 'JSON invalide renvoyé par le modèle.', raw: llmOut.slice(0, 2000) });
     }
 
-    // 6) Insert en DB (avec course_id + difficulty)
+    // 5) Insert en DB (avec course_id + difficulty)
     const set_code = randomUUID();
     const rows = items.map((it, i) => ({
       set_code,
@@ -125,12 +130,13 @@ Format JSON STRICT (tableau):
       .insert(rows)
       .select('id, set_code, course_id, question_index, question, options, answer, explanation, difficulty')
       .order('question_index', { ascending: true });
+
     if (insErr) {
       console.error('Insert questions error:', insErr);
       return res.status(500).json({ error: 'Erreur insertion questions.' });
     }
 
-    // 7) Réponse finale
+    // 6) Réponse finale
     const outItems = inserted.map((r) => ({
       question_id: r.id,
       set_code: r.set_code,
