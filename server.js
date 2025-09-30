@@ -26,6 +26,7 @@ app.use('/api', require('./routes/open'));
 app.use('/api', require('./routes/refine'));
 app.use('/api', require('./routes/sets'));
 app.use('/api', require('./routes/multi'));
+app.use('/api', require('./routes/manage'));
 
 
 // Middleware d'erreur global
