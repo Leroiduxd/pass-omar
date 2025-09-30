@@ -25,6 +25,8 @@ app.use('/api', require('./routes/score'));
 app.use('/api', require('./routes/open'));
 app.use('/api', require('./routes/refine'));
 app.use('/api', require('./routes/sets'));
+app.use('/api', require('./routes/multi'));
+
 
 // Middleware d'erreur global
 app.use((err, req, res, _next) => {
